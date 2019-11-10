@@ -18,9 +18,12 @@
 
 char* cache_getlink(const char *base, const char* file) {
   char * path = NULL;
+  int size = 256;
   asprintf(path, "%s/%s", base, file);
-  char *result = readlink(path);
-  if (result == NULL) {
+  char * result = NULL;
+  result = realloc(result,size);
+  memset(result,0,size);
+  if (readlink(path,result,size) == -1) {
     syslog(LOG_INFO,"cache_getlink: readlink error(result=NULL)\n");
     free(path);
     return NULL;

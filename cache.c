@@ -2,10 +2,10 @@
 #include <pthread.h>
 static char* cache_dir;
 static uint64_t cache_size;
-static unit64_t bucket_max_size;
+static unit64_t bucket_size;
 
 static pthread_mutex_t lock;
-void cache_init(const char *cache_dir_input, uint64_t cache_size_input, uint64_t bucket_max_size_input, unsigned long long cache_block_size) {
+int cache_init(const char *cache_dir_input, uint64_t cache_size_input, uint64_t bucket_max_size_input, unsigned long long cache_block_size) {
   syslog(LOG_INFO, "coming to init cache...");
   cache_dir = cache_dir_input;
   cache_size = cache_size_input;
@@ -16,7 +16,7 @@ void cache_init(const char *cache_dir_input, uint64_t cache_size_input, uint64_t
   asprintf(&buf, "%s/buckets", cache_dir);
   if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
     perror("cache.c: Failed to create /buckets");
-    go to exit;// go to ?
+    return -1;
   }
 
   FREE(buf);
@@ -25,17 +25,28 @@ void cache_init(const char *cache_dir_input, uint64_t cache_size_input, uint64_t
   asprintf(&buf, "%s/map", cache_dir);
   if (mkdir(buf, 0700) == -1 && errno != EEXIST) {
     perror("cache.c: Failed to create /buckets");
-    go to exit;
+    return -1;
   }
   FREE(buf);
   syslog(LOG_INFO, "create map/ dir: Done");
   
+  
   asprintf(&buf, "%s/buckets/bucket_size", cache_dir);
-  FILE *f = fopen(buf, "r");
+  FILE *f = fopen(buf, "w");
+  
   if (f == NULL) {
     perror("cache.c Failed to create buckets/bucket_size");
-    go to exit;
+    return -1;
   }
+  fprintf(f,"%llu", bucket_size);
+  fclose(f);
+  
+  free(buf);
+  asprintf(&buf, "%s/buckets/head",cache_dir);
+  symlink(buf,"dev/null");
+  
+  
+  /*
   unsigned long long old_cache_block_size;
   if (fscanf(f, "%llu", &old_cache_block_size) != 1) {
     perror("cache.c: Failed to get old_cache_block_size");
@@ -45,7 +56,7 @@ void cache_init(const char *cache_dir_input, uint64_t cache_size_input, uint64_t
     perror("cache.c: old_cache_block_size != cache_block_size");
     go to exit;
   }
-  
+  */
   //create bucket/ map/ nextBucketNum, head, tail
   
 }
@@ -112,6 +123,15 @@ int cache_fetch(const char *filename, uinit32_t block, uint64_t offset, char *bu
 
 int cache_add(const char *filename, uint32_t block, const char *buf, uint64_t len){
   //fileandboock = map/file1/3 (this is a symlink!!)
+  char blockPath[PATH_MAX];
+  snprinf(blockPath, PATH_MAX, "%s/map/%s/%s/%lu",cache_dir,filename,block);
+  if (readlink(blockPath) != NULL) {
+    syslog(LOG_INFO,"cache_add: block %lu of file %s already existed\n",block,filename);
+    return 0;
+  }
+  
+  //
+  
   if (symlink != NULL) {
     //  this file/block3 is  already existed. decide by (access(path) ==0)?
     return 0;
