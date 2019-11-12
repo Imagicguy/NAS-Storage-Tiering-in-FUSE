@@ -31,7 +31,7 @@ int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long l
   cache_img = cache_img_input; 
   free_list = new DLList();
   used_list = new DLList();
-  
+  /*  
   DataNode* node0 = new DataNode(0);
   node0->block_path = (char*)"dog.txt/0";
   used_list->addToHead(node0);
@@ -49,9 +49,9 @@ int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long l
   DataNode* node3 = new DataNode(3);
   node3->block_path = (char*)"dog.txt/3";
   free_list->addToHead(node3);
-  
-  next_potato_num = 4;
-  used_list->print();
+  */
+  next_potato_num = 0;
+  //  used_list->print();
   return 0;
   }
 
@@ -240,7 +240,7 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
 }
 
 
-
+/*
 int main() {
   char* cache_dir_input = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cachefs";
   char* cache_img = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cache.img";
@@ -271,3 +271,4 @@ int main() {
   char* write_buf = (char*)"qwer";
   cache_add(file_path,2,write_buf,4,&bread);
 }
+*/
