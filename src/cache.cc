@@ -193,13 +193,26 @@ DataNode* getFreeNode() {
 //path: a/dog.txt
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
   char file_path[PATH_MAX];
-  snprintf(file_path,PATH_MAX,"%s%s",cache_dir,path);
+  snprintf(file_path,PATH_MAX,"%s",cache_dir);
     //create dir if needed
+  int prev = 0;
+  for (auto i = 1;i < strlen(path);i++) {
+    if (path[i] == '/') {
+      snprintf(file_path, PATH_MAX, "%s%s",file_path,path.substr(prev,i - prev));
+      if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
+	printf("cache_add(): fail to create dir %s\n",file_path);
+	return -errno;
+      }
+      
+      prev = i;
+    }
+  }
+  snprintf(file_path, PATH_MAX, "%s%s",file_path,path.substr(prev));
   if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
     printf("cache_add(): fail to create dir %s\n",file_path);
     return -errno;
   }
-    
+
   
   DataNode* empty_node = getFreeNode();
   if (empty_node == NULL) {
