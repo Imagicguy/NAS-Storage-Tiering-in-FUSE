@@ -11,16 +11,23 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <sys/types.h>
+#ifdef HAVE_SYS_XATTR_H
+#include <sys/xattr.h>
+#endif
 
-// extern "C" {
-// 	//cache_add&init&fetch
-// }
 char rootdir[64];
 char cache_dir[64];
 char s3_dir[64];
 char mount_dir[64];
 unsigned long long block_size = 0;
 unsigned long long cache_size = 0;
+
+int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* buf, uint64_t len,ssize_t *bytes_read);
+
+int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread);
+
+int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long long cache_block_size, char* cache_img_input, char* cloud_dir_input);
 
 void real_path(char* source, const char* relative_path) {
 	// /home/fz49/
@@ -34,24 +41,31 @@ void real_path_root(char* source, const char* relative_path) {
 	strcat(source, relative_path);
 }
 
+void real_path_cache(char* source, const char* relative_path) {
+	// /home/fz49/
+	strcpy(source, cache_dir);
+	strcat(source, relative_path);
+}
+
 int rat_getattr(const char *path, struct stat *stbuf) {
 	fprintf(stderr, "In rat_getattr function-----------------------\n");
+
 	int retstat = 0;
 	char real[64];
 	real_path(real, path);
+    fprintf(stderr, "current path: %s\n", real);
     retstat = lstat(real, stbuf);
     if (retstat == -1) {
-    	return -1;
+    	char real2[64];
+    	real_path_cache(real2, path);
+    	fprintf(stderr, "current path: %s\n", real2);
+    	retstat = lstat(real2, stbuf);
+    	if (retstat == -1) {
+    		return -errno;
+    	}
     }
-    return retstat;
+    return 0;
 }
-
-int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* buf, uint64_t len,ssize_t *bytes_read);
-
-
-int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread);
-
-int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long long cache_block_size, char* cache_img_input, char* cloud_dir_input);
 
 int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
 	fprintf(stderr, "In rat_read function-----------------------\n");
@@ -89,14 +103,15 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 		// real_path(real, path);
 		// struct stat real_stat;
 		// if (stat(real, &real_stat) == -1) {
-  //           fprintf(stderr, "stat on the real file failed\n");
-  //           return -1;
+  //           fprintf(stderr, "stat on the s3 file failed\n");
+  //           return -errno;
   //       }
         fprintf(stderr, "about to call cache_fetch............\n");
         ssize_t bread = 0;
 
         // 从cache里面找，找到返回true path block 
         int result = cache_fetch(path, block, block_offset, buf + buf_offset, partial_block, &bread);
+        // cache里面没有，去s3找，找到加到cache
         if (result == -1) {
             fprintf(stderr, "read from cache failed\n");
         	// cache没找到，去s3找
@@ -138,6 +153,7 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
         }
 
         else {
+
         	fprintf(stderr, "file exists in cache_img\n");
         	// bread作为参数传到cache fetch
         	fprintf(stderr, "got %lu bytes from cache\n", (unsigned long)bread);
@@ -200,7 +216,7 @@ int rat_open(const char *path, struct fuse_file_info *fi) {
 	fprintf(stderr, "In rat_open function-----------------------\n");
     char real[64];
     real_path(real, path);
-    int fd = open(real, fi->flags);
+    int fd = open(real, O_RDWR | O_CREAT, S_IRWXG);
     if (fd == -1) {
        perror("Oprn: can not open\n");
     }
@@ -240,30 +256,104 @@ int rat_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offse
     return 0;
 }
 
-// int rat_releasedir(const char *path, struct fuse_file_info *fi) {
-//     fprintf(stderr, "In rat_releasedir function-----------------------\n");
-//     if (fi->fh != 0) {
-//         fprintf(stderr, "releasedir closing directory\n");
-//         DIR *dir = (DIR*)(intptr_t)(fi->fh);
-//         fi->fh = 0;
-//         closedir(dir);
-//     }
-//     return 0;
-// }
+int rat_releasedir(const char *path, struct fuse_file_info *fi) {
+    fprintf(stderr, "In rat_releasedir function-----------------------\n");
+    if (fi->fh != 0) {
+        fprintf(stderr, "releasedir closing directory\n");
+        DIR *dir = (DIR*)(intptr_t)(fi->fh);
+        fi->fh = 0;
+        closedir(dir);
+    }
+    return 0;
+}
 
+int rat_access(const char *path, int mask) {
+    fprintf(stderr, "In rat_access function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    int res = access(real, mask);
+    if (res == -1) {
+        return -errno;
+    }
+    return 0;
+}
 
-//override the system call
+int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
+    fprintf(stderr, "In rat_create function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    // int retval = open(real, info->flags | O_CREAT | O_EXCL);
+    if (mkdir(real, 0700) == -1) {
+    	perror("rat_create(): mkdir() failed");
+    	return -errno;
+    }
 
-// static struct fuse_operations rat_operations = {
-// 	.getattr = rat_getattr,
-// 	.read = rat_read,
-// 	.write = rat_write,
-// 	.open = rat_open,
-// 	// .releasedir = rat_releasedir,
-// 	.opendir = rat_opendir,
-// 	.readdir = rat_readdir,
-// };
+    info->fh = 10;
+    int cmod = chmod(real, mode);
+    if (cmod == -1) {
+        fprintf(stderr, "failure on chmod in rat_create\n");
+        return -errno;
+    }
+    return 0;
+}
 
+#ifdef HAVE_SYS_XATTR_H
+
+int rat_setxattr(const char *path, const char *name, const char *value, size_t size, int flags) {
+    fprintf(stderr, "In rat_setxattr function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    int ret = lsetxattr(real, name, value, size, flags);
+    if (ret == -1) {
+        perror("failure on setxattr");
+        return -errno;
+    }
+    return 0;
+}
+
+int rat_getxattr(const char *path, const char *name, char *value, size_t size) {
+    fprintf(stderr, "In rat_getxattr function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    int ret = getxattr(real, name, value, size);
+    if (ret == -1) {
+        perror("failure on getxattr");
+        return -errno;
+    }
+    return 0;
+}
+
+#endif
+
+int rat_flush(const char *path, struct fuse_file_info *fi) {
+    fprintf(stderr, "In rat_flush function-----------------------\n");
+    return 0;
+}
+
+int rat_utime(const char *path, struct utimbuf *ubuf) {
+    fprintf(stderr, "In rat_utime function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    int ret = utime(real, ubuf);
+    if (ret == -1) {
+        perror("failure on utime");
+        return -errno;
+    }
+    return 0;
+}
+
+int rat_truncate(const char *path, off_t newsize) {
+    fprintf(stderr, "In rat_truncate function-----------------------\n");
+    char real[64];
+    real_path_cache(real, path);
+    int ret = truncate(real, newsize);
+    if (ret == -1) {
+        perror("failure on truncate");
+        return -errno;
+    }
+    return 0;    
+
+}
 
 static struct rat_operations : fuse_operations {
 	rat_operations() {
@@ -273,18 +363,32 @@ static struct rat_operations : fuse_operations {
 		open = rat_open;
 		opendir = rat_opendir;
 		readdir = rat_readdir;
+        releasedir = rat_releasedir;
+        access = rat_access;
+        create = rat_create;
+        utime = rat_utime;
+        truncate = rat_truncate;
+        
+        flush = rat_flush;       
+        #ifdef HAVE_SYS_XATTR_H
+        getxattr = rat_getxattr;
+        setxattr = rat_setxattr;
+        #endif
+
 	}
 } rat_oper_init;
 
 
 int main(int argc, char **argv) {
 	// get current working directory: 
+	struct rat_operations oper();
+
 	getcwd(rootdir, sizeof(rootdir));
 	strcat(rootdir, "/");
 
 	char cache_img_input[64];
-	const char *cache_img = "cache.img";
-	real_path_root(cache_img_input, cache_img);
+    const char *temp = "cache.img";
+	real_path_root(cache_img_input, temp);
 	real_path_root(cache_dir, argv[argc - 5]);
 	real_path_root(s3_dir, argv[argc - 4]);
 	real_path_root(mount_dir, argv[argc - 3]);
