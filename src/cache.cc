@@ -60,12 +60,13 @@ int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long l
 //fullpath format: "/home/cachefs/a/dog.txt/2"
 int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* buf, uint64_t len,ssize_t *bytes_read) {
   char fullpath[PATH_MAX];
-  snprintf(fullpath, PATH_MAX, "%s/%s/%u",cache_dir,path,block_num);
-  pthread_mutex_lock(&lock);
+  snprintf(fullpath, PATH_MAX, "%s%s/%u",cache_dir,path,block_num);
+  //  pthread_mutex_lock(&lock);
 
   char data[100];
   FILE* block_ptr = fopen(fullpath, "r");
   if (block_ptr == NULL) {// this block doesn't exist in cache
+    //    pthread_mutex_unlock(&lock);
     return -1;
   }else {
     if (fgets(data, 100, block_ptr) != NULL) {
@@ -96,13 +97,13 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
     printf("cache_fetch: read from cache.img failed nread=%ld\n",*bytes_read);
     fclose(block_ptr);
     close(fd);
-    pthread_mutex_unlock(&lock);
+    //    pthread_mutex_unlock(&lock);
     return -1;
   }
   
   fclose(block_ptr);
   close(fd);
-  pthread_mutex_unlock(&lock);
+  //  pthread_mutex_unlock(&lock);
   return 0;
 }
 
@@ -192,11 +193,11 @@ DataNode* getFreeNode() {
 //path: a/dog.txt
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
   char file_path[PATH_MAX];
-  snprintf(file_path,PATH_MAX,"%s/%s",cache_dir,path);
-  //create dir if needed
-  if (mkdir(file_path,0700) == -1 && errno != EEXIST) {
-    perror("cache_add(): fail to create dir\n");
-    return -1;
+  snprintf(file_path,PATH_MAX,"%s%s",cache_dir,path);
+    //create dir if needed
+  if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
+    printf("cache_add(): fail to create dir %s\n",file_path);
+    return -errno;
   }
     
   
@@ -219,9 +220,10 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
     return - 1;
   }
   char* content = (char*)malloc(128);
-  snprintf(content,128, "%d#%d#%lu",empty_node->index(),0,len);
+  memset(content, 0, 128);
+  snprintf(content,128, "%d#%d#%lu\n",empty_node->index(),0,len);
   
-  int bytes_written_content = pwrite(cache_fd,content, 128, 0);
+  ssize_t bytes_written_content = pwrite(cache_fd,content, 128, 0);
   int cache_img_fd = open(cache_img,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
   int bytes_written_img = pwrite(cache_img_fd,buf,len,block_num*potato_size + 0);
   
@@ -231,7 +233,7 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
       bytes_written_img += more_bytes_written;
     }
   }
-  bread = bytes_written_content;
+  *bread = bytes_written_content;
   close(cache_fd);
   close(cache_img_fd);
   return 0;

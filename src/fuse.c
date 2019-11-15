@@ -72,7 +72,8 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 	// int retval = 0;
 	int bytes_read;
 	char* s3_read_buf = NULL;
-
+	fprintf(stderr, "size = %d\n", size);
+	fprintf(stderr, "offset = %d\n", offset);
 	// calculate the first_block number and last_block number
 	uint32_t first_block = offset / block_size;
 	uint32_t last_block = (offset + size) / block_size;
@@ -110,6 +111,7 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
         ssize_t bread = 0;
 
         // 从cache里面找，找到返回true path block 
+        fprintf(stderr, "partial block = %d\n", partial_block);
         int result = cache_fetch(path, block, block_offset, buf + buf_offset, partial_block, &bread);
         // cache里面没有，去s3找，找到加到cache
         if (result == -1) {
@@ -270,7 +272,7 @@ int rat_releasedir(const char *path, struct fuse_file_info *fi) {
 int rat_access(const char *path, int mask) {
     fprintf(stderr, "In rat_access function-----------------------\n");
     char real[64];
-    real_path_cache(real, path);
+    real_path(real, path);
     int res = access(real, mask);
     if (res == -1) {
         return -errno;
@@ -281,10 +283,14 @@ int rat_access(const char *path, int mask) {
 int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     fprintf(stderr, "In rat_create function-----------------------\n");
     char real[64];
-    real_path_cache(real, path);
-    // int retval = open(real, info->flags | O_CREAT | O_EXCL);
-    if (mkdir(real, 0700) == -1) {
-    	perror("rat_create(): mkdir() failed");
+    real_path(real, path);
+    int retval = open(real, info->flags | O_CREAT | O_EXCL);
+    // if (mkdir(real, 0700) == -1) {
+    // 	perror("rat_create(): mkdir() failed");
+    // 	return -errno;
+    // }
+    if (retval == -1) {
+    	perror("error on rat_create");
     	return -errno;
     }
 
