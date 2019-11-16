@@ -192,27 +192,45 @@ DataNode* getFreeNode() {
 }
 //path: a/dog.txt
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
+  fprintf(stderr, "cache_add(): path is %s\n",path);
   char file_path[PATH_MAX];
+  
   snprintf(file_path,PATH_MAX,"%s",cache_dir);
     //create dir if needed
   int prev = 0;
   for (auto i = 1;i < strlen(path);i++) {
     if (path[i] == '/') {
-      snprintf(file_path, PATH_MAX, "%s%s",file_path,path.substr(prev,i - prev));
+      char* path_content = (char*)malloc(i - prev);
+      //      fprintf(stderr,"cache_add(): path_content length is %d\n",strlen(path_content));
+      memset(path_content,0,i - prev);
+      snprintf(path_content,i - prev + 1,"%s",path + prev);
+      fprintf(stderr,"cache_add(): path_content is %s\n",path_content);
+      snprintf(file_path + strlen(file_path), i - prev + 1, "%s",path_content);
+      fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
       if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
 	printf("cache_add(): fail to create dir %s\n",file_path);
 	return -errno;
       }
       
       prev = i;
+      free(path_content);
     }
   }
-  snprintf(file_path, PATH_MAX, "%s%s",file_path,path.substr(prev));
+
+  char* path_content = (char*)malloc(strlen(path) - prev);
+  memset(path_content,0,strlen(path) - prev);
+  snprintf(path_content,strlen(path) - prev + 1,"%s",path + prev);
+  fprintf(stderr,"cache_add(): path_content length is %d\n",strlen(path_content));
+  fprintf(stderr,"cache_add(): path_content is %s\n",path_content);
+  snprintf(file_path + strlen(file_path), strlen(path) - prev + 1, "%s",path_content);
+  fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
+  //  snprintf(file_path, PATH_MAX, "%s%s",file_path,path_content);
+  
   if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
     printf("cache_add(): fail to create dir %s\n",file_path);
     return -errno;
   }
-
+  free(path_content);
   
   DataNode* empty_node = getFreeNode();
   if (empty_node == NULL) {

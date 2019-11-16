@@ -173,7 +173,7 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 
 int rat_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
 	fprintf(stderr, "In rat_write function-----------------------\n");
-	int bytes_write;
+	int bytes_write = 0;
 	off_t buf_offset = 0;
 	uint32_t first_block = offset / block_size;
 	uint32_t last_block = (offset + size) / block_size;
@@ -206,7 +206,7 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
         if (cache_add(path, block, buf + buf_offset, write_size, &cache_add_bytes) == -1) {
             fprintf(stderr, "fail to add block to cache\n");
         }
-
+	bytes_write += cache_add_bytes;
         fprintf(stderr, "bytes added to cache = %zd\n", cache_add_bytes);
         buf_offset += write_size;
     }
