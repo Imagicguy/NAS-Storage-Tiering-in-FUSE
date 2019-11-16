@@ -80,10 +80,10 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
 
   int potato_index = atoi(strtok(data,"#"));
   printf("potato_index: %d\n",potato_index);
-  char* block_offset = strtok(NULL, "#");// should be same as offset
-  printf("block_offset: %s\n",block_offset);
-  char* block_read_size = strtok(NULL, "#");//should be same as len
-  printf("block_read_size: %s\n", block_read_size);
+  ssize_t block_offset = atoi(strtok(NULL, "#"));// should be same as offset
+  printf("block_offset: %d\n",block_offset);
+  off_t block_read_size = atoi(strtok(NULL, "#"));//should be same as len
+  printf("block_read_size: %d\n", block_read_size);
   DataNode* node = map[potato_index];
   used_list->refresh(node);
   used_list->print();
@@ -91,7 +91,7 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
   if (fd == -1) {
     printf("cache_fetch: open cache_img failed %s \n", cache_img);
   }
-  *bytes_read = pread(fd, buf, len, potato_index* potato_size + offset);
+  *bytes_read = pread(fd, buf, block_read_size, potato_index* potato_size + offset);
   
   if (*bytes_read  == -1) {
     printf("cache_fetch: read from cache.img failed nread=%ld\n",*bytes_read);
@@ -125,7 +125,7 @@ DataNode* getFreeNode() {
       return NULL;
     }
     char cache_block_path[PATH_MAX];// /home/cachefs/a/dog.txt/1
-    snprintf(cache_block_path,PATH_MAX,"%s/%s",cache_dir,used_head->block_path);
+    snprintf(cache_block_path,PATH_MAX,"%s%s",cache_dir,used_head->block_path);
     char data[100];
 
     FILE* cache_ptr = fopen(cache_block_path,"r");
@@ -164,7 +164,7 @@ DataNode* getFreeNode() {
     
     printf("file_related_path: %s\n", file_related_path);
     char file_cloud_path[PATH_MAX];// /cloudfs/a/dog.txt
-    snprintf(file_cloud_path, PATH_MAX, "%s/%s",cloud_dir,file_related_path);
+    snprintf(file_cloud_path, PATH_MAX, "%s%s",cloud_dir,file_related_path);
     printf("file_cloud_path: %s\n",file_cloud_path);
     int cloud_fd = open(file_cloud_path,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
     if (cloud_fd == -1) {
@@ -225,7 +225,7 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   snprintf(block_path, PATH_MAX, "%s/%u",path,block_num);
   empty_node->block_path = block_path;
   char cache_block_path[PATH_MAX];
-  snprintf(cache_block_path, PATH_MAX, "%s/%s", cache_dir, block_path);
+  snprintf(cache_block_path, PATH_MAX, "%s%s", cache_dir, block_path);
   int cache_fd = open(cache_block_path,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
 
   if (cache_fd == -1) {
