@@ -261,10 +261,13 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   if (bytes_written_img <= len) {
     while (bytes_written_img != len) {
       ssize_t more_bytes_written = write(cache_img_fd, buf + bytes_written_img, len - bytes_written_img);
+      if (more_bytes_written == 0) {
+	break;
+      }
       bytes_written_img += more_bytes_written;
     }
   }
-  *bread = bytes_written_content;
+  *bread = bytes_written_img;
   close(cache_fd);
   close(cache_img_fd);
   return 0;
