@@ -59,6 +59,7 @@ void print_getattr(struct stat *stbuf) {
 
 int rat_getattr(const char *path, struct stat *stbuf) {
 	fprintf(stderr, "In rat_getattr function-----------------------\n");
+	/*
 	if (metadata.find(path) != metadata.end()) {
 	  perror("rat_getattr(): get metadata from map\n");
 	  *stbuf = metadata.at(path);
@@ -67,6 +68,7 @@ int rat_getattr(const char *path, struct stat *stbuf) {
 	  
 	  return 0;
 	}
+	*/
 	int retstat = 0;
 	char real[64];
 	real_path(real, path);
@@ -74,7 +76,10 @@ int rat_getattr(const char *path, struct stat *stbuf) {
 	fprintf(stderr, "before lstat, current real_path: %s\n", real);
 	retstat = lstat(real, stbuf);
 	if (retstat == -1) {
+	  
 	  fprintf(stderr,"rat_getattr(): failed to get from s3, try with cache...\n");
+	  return -errno;
+	  /*
 	  char real2[64];
 	  real_path_cache(real2, path);
 	  fprintf(stderr, "current path: %s\n", real2);
@@ -83,9 +88,9 @@ int rat_getattr(const char *path, struct stat *stbuf) {
 	    perror("rat_getattr(): retstat from cache_dir == -1\n");
 	    return -errno;
 	  }
-	  return 0;
+	  */
 	}
-	perror("rat_getattr(): get stbuf from s3...\n");
+	//	perror("rat_getattr(): get stbuf from s3...\n");
 	return 0;
 }
 
@@ -191,11 +196,14 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 }
 
 int rat_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+
+  /*
   if (metadata.find(path) != metadata.end()) {
     fprintf(stderr,"rat_write: this file metadata existed in map, changing it size now....\n");
     metadata[path].st_size = size;
-  }
+  }*/
   fprintf(stderr, "In rat_write function-----------------------\n");
+  fprintf(stderr, "size== %lu\n",size);
   int bytes_write = 0;
   off_t buf_offset = 0;
   uint32_t first_block = offset / block_size;
@@ -226,14 +234,21 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
     ssize_t cache_add_bytes = 0;
 
     // write through cache, 就不往s3写了
+    ssize_t nwritten = pwrite((int)fi->fh, buf + buf_offset, write_size, offset + buf_offset);
+    fprintf(stderr,"rat_write(): pwrite(): nwritten= %lu\n",nwritten);
+    bytes_write += nwritten;
+    /*
     if (cache_add(path, block, buf + buf_offset, write_size, &cache_add_bytes) == -1) {
       fprintf(stderr, "fail to add block to cache\n");
     }
     bytes_write += cache_add_bytes;
     fprintf(stderr, "bytes added to cache = %zd\n", cache_add_bytes);
+    buf_offset += write_size;*/
     buf_offset += write_size;
   }
   return bytes_write;
+  
+  
 }
 
 
