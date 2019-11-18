@@ -8,8 +8,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <string>
-#include <iostream>
 using namespace std;
 static char* cache_dir;
 static uint64_t cache_size;
@@ -82,10 +80,10 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
 
   int potato_index = atoi(strtok(data,"#"));
   printf("potato_index: %d\n",potato_index);
-  off_t block_offset = atoi(strtok(NULL, "#"));// should be same as offset
-  printf("block_offset: %jd\n",block_offset);
-  ssize_t block_read_size = atoi(strtok(NULL, "#"));//should be same as len
-  printf("block_read_size: %lu\n", block_read_size);
+  ssize_t block_offset = atoi(strtok(NULL, "#"));// should be same as offset
+  printf("block_offset: %zd\n",block_offset);
+  off_t block_read_size = atoi(strtok(NULL, "#"));//should be same as len
+  printf("block_read_size: %jd\n", block_read_size);
   DataNode* node = map[potato_index];
   used_list->refresh(node);
   used_list->print();
@@ -93,7 +91,7 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
   if (fd == -1) {
     printf("cache_fetch: open cache_img failed %s \n", cache_img);
   }
-  *bytes_read = pread(fd, buf, block_read_size, potato_index* potato_size + block_offset);
+  *bytes_read = pread(fd, buf, block_read_size, potato_index* potato_size + offset);
   
   if (*bytes_read  == -1) {
     printf("cache_fetch: read from cache.img failed nread=%ld\n",*bytes_read);
@@ -136,8 +134,8 @@ DataNode* getFreeNode() {
       return NULL;
     }else {
       if (fgets(data,100,cache_ptr) != NULL) {
-  puts(data);
-  fclose(cache_ptr);
+	puts(data);
+	fclose(cache_ptr);
       }
     }
         
@@ -159,8 +157,8 @@ DataNode* getFreeNode() {
     char file_related_path[PATH_MAX];// a/dog.txt
     for (auto i = strlen(used_head->block_path) - 1;i < strlen(used_head->block_path);i--) {
       if (used_head->block_path[i] == '/') {
-  strncpy(file_related_path,used_head->block_path,i);
-  break;
+	strncpy(file_related_path,used_head->block_path,i);
+	break;
       }
     }
     
@@ -192,37 +190,47 @@ DataNode* getFreeNode() {
   return free_list->getTail();
     
 }
-//path: /a/dog.txt
+//path: a/dog.txt
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
+  fprintf(stderr, "cache_add(): path is %s\n",path);
   char file_path[PATH_MAX];
+  
   snprintf(file_path,PATH_MAX,"%s",cache_dir);
     //create dir if needed
   int prev = 0;
   for (auto i = 1;i < strlen(path);i++) {
     if (path[i] == '/') {
-      char* substr = (char*)malloc(i - prev);
-      memset(substr, 0, i - prev);
-      strncpy(substr,path + prev, i - prev);
-      //      string str = path->substr(prev,i - prev);
-      snprintf(file_path + strlen(file_path), PATH_MAX, "%s",substr);
+      char* path_content = (char*)malloc(i - prev);
+      //      fprintf(stderr,"cache_add(): path_content length is %d\n",strlen(path_content));
+      memset(path_content,0,i - prev);
+      snprintf(path_content,i - prev + 1,"%s",path + prev);
+      fprintf(stderr,"cache_add(): path_content is %s\n",path_content);
+      snprintf(file_path + strlen(file_path), i - prev + 1, "%s",path_content);
+      fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
       if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
 	printf("cache_add(): fail to create dir %s\n",file_path);
 	return -errno;
       }
       
       prev = i;
-      free(substr);
+      free(path_content);
     }
   }
-  char* substr = (char*)malloc(strlen(path) - prev);
-  memset(substr, 0, strlen(path) - prev);
-  strncpy(substr, path + prev, strlen(path) - prev);
-  snprintf(file_path + strlen(file_path), PATH_MAX, "%s", substr);
+
+  char* path_content = (char*)malloc(strlen(path) - prev);
+  memset(path_content,0,strlen(path) - prev);
+  snprintf(path_content,strlen(path) - prev + 1,"%s",path + prev);
+  fprintf(stderr,"cache_add(): path_content length is %zu\n",strlen(path_content));
+  fprintf(stderr,"cache_add(): path_content is %s\n",path_content);
+  snprintf(file_path + strlen(file_path), strlen(path) - prev + 1, "%s",path_content);
+  fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
+  //  snprintf(file_path, PATH_MAX, "%s%s",file_path,path_content);
+  
   if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
     printf("cache_add(): fail to create dir %s\n",file_path);
     return -errno;
   }
-  free(substr);
+  free(path_content);
   
   DataNode* empty_node = getFreeNode();
   if (empty_node == NULL) {
@@ -236,9 +244,7 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   empty_node->block_path = block_path;
   char cache_block_path[PATH_MAX];
   snprintf(cache_block_path, PATH_MAX, "%s%s", cache_dir, block_path);
-  fprintf(stderr, "cache_block_path = %s\n", cache_block_path);
   int cache_fd = open(cache_block_path,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-
 
   if (cache_fd == -1) {
     perror("cache_add(): cache_fd == -1\n");
@@ -250,25 +256,55 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   
   ssize_t bytes_written_content = pwrite(cache_fd,content, 128, 0);
   int cache_img_fd = open(cache_img,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-  ssize_t bytes_written_img = pwrite(cache_img_fd,buf,len,block_num*potato_size + 0);
+  int bytes_written_img = pwrite(cache_img_fd,buf,len,empty_node->index() * potato_size + 0);
   
-  fprintf(stderr, "len = %lu, bytes_written_img = %zd\n", len, bytes_written_img);
   if (bytes_written_img <= len) {
-    while (bytes_written_img <= len) {
+    while (bytes_written_img != len) {
       ssize_t more_bytes_written = write(cache_img_fd, buf + bytes_written_img, len - bytes_written_img);
       if (more_bytes_written == 0) {
-        break;
+	       break;
       }
       bytes_written_img += more_bytes_written;
-
     }
   }
-  fprintf(stderr, "%zd\n", bytes_written_img);
   *bread = bytes_written_img;
-  close(cache_fd);
-  close(cache_img_fd);
+  // close(cache_fd);
+  // close(cache_img_fd);
   return 0;
   //real read & mkdir for new file if necessary
   //put into free
 }
 
+
+/*
+int main() {
+  char* cache_dir_input = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cachefs";
+  char* cache_img = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cache.img";
+  uint64_t cache_size_input = 16;
+  unsigned long long cache_block_size = 4;
+  char* cloud_dir = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cloudfs";
+  cache_init(cache_dir_input, cache_size_input, cache_block_size, cache_img,cloud_dir);
+
+  //********************************
+  // cache_fetch() test
+  printf("cache_fetch()**********************%d\n",1);
+  char* block_buf = (char*)malloc(cache_block_size);
+  ssize_t bread = 0;
+  char* file_path = (char*)"dog.txt";
+  int res = cache_fetch(file_path,0,0,block_buf, cache_block_size,&bread);
+  if (res == -1) {
+    printf("cache_fetch() test cache miss: %d", res);
+  }
+  printf("get from buf: %s\n", block_buf);
+  printf("byte read: %ld\n", bread);
+  //********************************
+  
+  printf("getFreeNode()********************%d\n",2);
+  getFreeNode();
+  getFreeNode();
+
+  printf("cache_add()********************%d\n",3);
+  char* write_buf = (char*)"qwer";
+  cache_add(file_path,2,write_buf,4,&bread);
+}
+*/
