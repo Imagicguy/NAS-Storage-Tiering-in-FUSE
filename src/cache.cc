@@ -191,6 +191,16 @@ DataNode* getFreeNode() {
     
 }
 //path: a/dog.txt
+
+int moveToFree(int potato_index){
+  DataNode* node = map.at(potato_index);
+  if (node == NULL) {
+    return -1;
+  }
+  used_list->remove(node);
+  free_list->addToHead(node);
+  return 0;
+}
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
   fprintf(stderr, "cache_add(): path is %s\n",path);
   char file_path[PATH_MAX];
