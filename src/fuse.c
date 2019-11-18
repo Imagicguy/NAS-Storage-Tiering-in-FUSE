@@ -54,7 +54,7 @@ void print_getattr(struct stat *stbuf) {
     fprintf(stderr, "stbuf->uid = %d\n", stbuf->st_uid);
     // fprintf(stderr, "stbuf->pid = %d\n", stbuf->st_pid);
     fprintf(stderr, "stbuf->mode = %d\n", stbuf->st_mode);
-    fprintf(stderr, "stbuf->size = %d\n", stbuf->st_size);
+    fprintf(stderr, "stbuf->size = %jd\n", stbuf->st_size);
 }
 
 int rat_getattr(const char *path, struct stat *stbuf) {
@@ -97,10 +97,11 @@ int rat_getattr(const char *path, struct stat *stbuf) {
 int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
 	fprintf(stderr, "In rat_read function-----------------------\n");
 	// int retval = 0;
+    fprintf(stderr, "rat_read(): size=%zu\n",size);
 	int bytes_read;
 	char* s3_read_buf = NULL;
-	fprintf(stderr, "size = %d\n", size);
-	fprintf(stderr, "offset = %d\n", offset);
+	fprintf(stderr, "size = %zu\n", size);
+	fprintf(stderr, "offset = %jd\n", offset);
 	// calculate the first_block number and last_block number
 	uint32_t first_block = offset / block_size;
 	uint32_t last_block = (offset + size) / block_size;
@@ -138,14 +139,19 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
         ssize_t bread = 0;
 
         // 从cache里面找，找到返回true path block 
-        fprintf(stderr, "partial block = %d\n", partial_block);
+        // search from cache, return 0 if founded
+        fprintf(stderr, "partial block = %zu\n", partial_block);
+
         int result = cache_fetch(path, block, block_offset, buf + buf_offset, partial_block, &bread);
         // cache里面没有，去s3找，找到加到cache
+        // not exist in cache, search from s3 and then added to cache
         if (result == -1) {
             fprintf(stderr, "read from cache failed\n");
         	// cache没找到，去s3找
+            // search from s3.....
         	fprintf(stderr, "need to read from s3_dir\n");
         	// fd 从open得到
+            // fd got from open()
             int fd = (int)fi->fh;
             s3_read_buf = (char*)malloc(block_size);
             int s3_read = pread(fd, s3_read_buf, block_size, block_size * block);
@@ -192,28 +198,30 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 	
         buf_offset += block_size;
 	}
+    
 	return bytes_read;
 }
 
 int rat_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-
   /*
   if (metadata.find(path) != metadata.end()) {
     fprintf(stderr,"rat_write: this file metadata existed in map, changing it size now....\n");
     metadata[path].st_size = size;
   }*/
   fprintf(stderr, "In rat_write function-----------------------\n");
-  fprintf(stderr, "size== %lu\n",size);
+  fprintf(stderr, "size == %lu\n",size);
   int bytes_write = 0;
   off_t buf_offset = 0;
   uint32_t first_block = offset / block_size;
   uint32_t last_block = (offset + size) / block_size;
+  // bool flag = false;
   // fprintf(stderr, "first_block = %d\n", first_block);
   // fprintf(stderr, "last_block = %d\n", last_block);
   for (uint32_t block = first_block; block <= last_block; block++) {
     size_t write_size;
+    
     if (block == first_block) {
-      write_size = ((block + 1) * block_size) - offset;
+        write_size = ((block + 1) * block_size) - offset;
     }
     else if (block == last_block){
       write_size = size - buf_offset;
@@ -233,9 +241,17 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
     // ssize_t temp_write = pwrite((int)fi->fh, buf + buf_offset, write_size, offset + buf_offset);
     ssize_t cache_add_bytes = 0;
 
-    // write through cache, 就不往s3写了
+    // write through cache, call pwrtie directly
+    fprintf(stderr, "in block %d, write size = %zu\n", block, write_size);
+
     ssize_t nwritten = pwrite((int)fi->fh, buf + buf_offset, write_size, offset + buf_offset);
-    fprintf(stderr,"rat_write(): pwrite(): nwritten= %lu\n",nwritten);
+    fprintf(stderr, "file descriptor = %lu\n", fi->fh);
+    if (nwritten == -1) {
+        fprintf(stderr, "pwrite error!!\n");
+        return -errno;
+    }
+
+    fprintf(stderr,"rat_write(): pwrite(): nwritten= %lu\n", nwritten);
     bytes_write += nwritten;
     /*
     if (cache_add(path, block, buf + buf_offset, write_size, &cache_add_bytes) == -1) {
@@ -246,9 +262,8 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
     buf_offset += write_size;*/
     buf_offset += write_size;
   }
-  return bytes_write;
-  
-  
+  // close(fi->fh);
+  return bytes_write;  
 }
 
 
@@ -258,10 +273,11 @@ int rat_open(const char *path, struct fuse_file_info *fi) {
     real_path(real, path);
     int fd = open(real, O_RDWR | O_CREAT, S_IRWXG);
     if (fd == -1) {
-       perror("Oprn: can not open\n");
+       perror("Open: can not open\n");
     }
     fi->fh = fd;
     // 成功， 已经把fd送到fi->fh
+    // close(fd);
     return 0;
 }
 
@@ -319,7 +335,6 @@ int rat_access(const char *path, int mask) {
 }
 
 
-
 int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     fprintf(stderr, "In rat_create function-----------------------\n");
 
@@ -353,12 +368,14 @@ int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
       metadata[path]= statbuf;
       print_getattr(&statbuf);
       }*/
-    info->fh = 10;
+    info->fh = retval;
+    fprintf(stderr, "file descriptor in create = %d\n", retval);
     int cmod = chmod(real, mode);
     if (cmod == -1) {
         fprintf(stderr, "failure on chmod in rat_create\n");
         return -errno;
     }
+    // close(retval);
     return 0;
 }
 
@@ -418,9 +435,76 @@ int rat_truncate(const char *path, off_t newsize) {
       perror("failure on truncate");
       return -errno;
     }
-    return 0;    
-    
+    return 0;
 }
+
+int rat_utimens(const char *path, const struct timespec tv[2]) {
+    return 0;
+    fprintf(stderr, "In rat_utimens function-----------------------\n");
+    char real[64];
+    real_path(real, path);
+    int res = utimensat(0, real, tv, 0);
+    if (res == -1) {
+        return -errno;
+    }
+    return 0;
+}
+
+int rat_mkdir(const char *path, mode_t mode) {
+    fprintf(stderr, "In rat_utimens function-----------------------\n");
+    char real[64];
+    real_path(real, path);    
+    int res = mkdir(real, mode);
+    if (res == -1) {
+        return -errno;
+    }
+    return 0;
+}
+
+
+int rat_unlink(const char *path) { 
+    fprintf(stderr, "In rat_unlink function-----------------------\n");
+    char real[64];
+    real_path(real, path);
+    // remove from s3
+    int res = unlink(real);
+    if (res == -1) {
+        return -errno;
+    }
+
+    // remove from cache
+
+    // char cache_dir[64];
+    // real_path_cache(cache_dir, path);
+    // DIR *dr = opendir(cache_dir);
+    // struct dirent *de; 
+    // if (dr == NULL) {
+    //     fprintf(stderr, "Could not open current directory\n" ); 
+    //     return -errno; 
+    // } 
+
+    // while ((de = readdir(dr)) != NULL) {
+    //     fprintf(stderr, "ready to delete %s\n", de->d_name); 
+        
+    // }
+  
+    // closedir(dr);     
+    return 0; 
+}
+
+int rat_rmdir(const char *path) {
+    fprintf(stderr, "In rat_unlink function-----------------------\n");
+    char real[64];
+    real_path(real, path);
+    // remove from s3
+    int res = rmdir(real);
+    if (res == -1) {
+        return -errno;
+    }
+    return 0;
+
+}
+
 
 static struct rat_operations : fuse_operations {
   rat_operations() {
@@ -434,14 +518,17 @@ static struct rat_operations : fuse_operations {
     access = rat_access;
     create = rat_create;
     utime = rat_utime;
-    truncate = rat_truncate;
-        
-    flush = rat_flush;       
+    truncate = rat_truncate; 
+    flush = rat_flush;   
+    mkdir = rat_mkdir;
+    unlink = rat_unlink;
+    rmdir = rat_rmdir;
+    // utimens = rat_utimens;
+
 #ifdef HAVE_SYS_XATTR_H
     getxattr = rat_getxattr;
     setxattr = rat_setxattr;
 #endif
-
   }
 } rat_oper_init;
 
@@ -479,7 +566,6 @@ int main(int argc, char **argv) {
 	fprintf(stderr, "mount_dir = %s\n", argv[argc - 3]);
 	fprintf(stderr, "cache_size = %s\n", argv[argc - 2]);
 	fprintf(stderr, "block_size = %s\n", argv[argc - 1]);
-	
 
 	argv[argc - 5] = argv[argc - 3];
 	argv[argc - 4] = NULL;

@@ -81,9 +81,9 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
   int potato_index = atoi(strtok(data,"#"));
   printf("potato_index: %d\n",potato_index);
   ssize_t block_offset = atoi(strtok(NULL, "#"));// should be same as offset
-  printf("block_offset: %d\n",block_offset);
+  printf("block_offset: %zd\n",block_offset);
   off_t block_read_size = atoi(strtok(NULL, "#"));//should be same as len
-  printf("block_read_size: %d\n", block_read_size);
+  printf("block_read_size: %jd\n", block_read_size);
   DataNode* node = map[potato_index];
   used_list->refresh(node);
   used_list->print();
@@ -220,7 +220,7 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   char* path_content = (char*)malloc(strlen(path) - prev);
   memset(path_content,0,strlen(path) - prev);
   snprintf(path_content,strlen(path) - prev + 1,"%s",path + prev);
-  fprintf(stderr,"cache_add(): path_content length is %d\n",strlen(path_content));
+  fprintf(stderr,"cache_add(): path_content length is %zu\n",strlen(path_content));
   fprintf(stderr,"cache_add(): path_content is %s\n",path_content);
   snprintf(file_path + strlen(file_path), strlen(path) - prev + 1, "%s",path_content);
   fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
@@ -256,20 +256,20 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   
   ssize_t bytes_written_content = pwrite(cache_fd,content, 128, 0);
   int cache_img_fd = open(cache_img,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-  int bytes_written_img = pwrite(cache_img_fd,buf,len,block_num*potato_size + 0);
+  int bytes_written_img = pwrite(cache_img_fd,buf,len,empty_node->index() * potato_size + 0);
   
   if (bytes_written_img <= len) {
     while (bytes_written_img != len) {
       ssize_t more_bytes_written = write(cache_img_fd, buf + bytes_written_img, len - bytes_written_img);
       if (more_bytes_written == 0) {
-	break;
+	       break;
       }
       bytes_written_img += more_bytes_written;
     }
   }
   *bread = bytes_written_img;
-  close(cache_fd);
-  close(cache_img_fd);
+  // close(cache_fd);
+  // close(cache_img_fd);
   return 0;
   //real read & mkdir for new file if necessary
   //put into free
