@@ -31,6 +31,8 @@ int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long l
   cache_img = cache_img_input; 
   free_list = new DLList();
   used_list = new DLList();
+  fprintf(stderr, "free_list->getSize(): %d\n",free_list->getSize());
+  fprintf(stderr, "used_list->getSize(): %d\n",used_list->getSize());
   /*  
   DataNode* node0 = new DataNode(0);
   node0->block_path = (char*)"dog.txt/0";
@@ -104,28 +106,39 @@ int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* bu
   fclose(block_ptr);
   close(fd);
   //  pthread_mutex_unlock(&lock);
+  fprintf(stderr,"used_list:\n");
+  used_list->print();
+  fprintf(stderr, "free_list:\n");
+  free_list->print();
   return 0;
 }
 
 DataNode* getFreeNode() {
-  if (free_list->getSize() != 0) {
+  if (free_list->getSize() > 0) {
     printf("have free node %d\n",free_list->getSize());
+    fprintf(stderr,"used_list:\n");
+    used_list->print();
+    fprintf(stderr, "free_list:\n");
+    free_list->print();
     return free_list->getTail();
   }
   //no free node avaliable, need to create new one
   if (next_potato_num <  max_potato_num) {// cache not full, create new one
     DataNode* tmp = new DataNode(next_potato_num);
+    fprintf(stderr, "before create new node, free_list->size(): %d\n",free_list->getSize());
     map[next_potato_num++] = tmp;
     free_list->addToHead(tmp);
     printf("create new one free_node:%lu\n", next_potato_num);
+    fprintf(stderr, "after create new node, free_list->size(): %d\n",free_list->getSize());
   }else {
-    DataNode* used_head  = used_list->getHead();
-    if (used_head == NULL) {
-      perror("getFreeNode(): used_head == NULL");
+    fprintf(stderr, "cache full, need to clean last node of used_list\n");
+    DataNode* used_tail  = used_list->getTail();
+    if (used_tail == NULL) {
+      perror("getFreeNode(): used_tail == NULL");
       return NULL;
     }
     char cache_block_path[PATH_MAX];// /home/cachefs/a/dog.txt/1
-    snprintf(cache_block_path,PATH_MAX,"%s%s",cache_dir,used_head->block_path);
+    snprintf(cache_block_path,PATH_MAX,"%s%s",cache_dir,used_tail->block_path);
     char data[100];
 
     FILE* cache_ptr = fopen(cache_block_path,"r");
@@ -134,11 +147,11 @@ DataNode* getFreeNode() {
       return NULL;
     }else {
       if (fgets(data,100,cache_ptr) != NULL) {
-	puts(data);
-	fclose(cache_ptr);
+        puts(data);
+        fclose(cache_ptr);
       }
     }
-        
+
     int potato_index = atoi(strtok(data,"#"));
     int potato_offset = atoi(strtok(NULL,"#"));
     int potato_read_len = atoi(strtok(NULL,"#"));
@@ -155,16 +168,17 @@ DataNode* getFreeNode() {
     }
 
     char file_related_path[PATH_MAX];// a/dog.txt
-    for (auto i = strlen(used_head->block_path) - 1;i < strlen(used_head->block_path);i--) {
-      if (used_head->block_path[i] == '/') {
-	strncpy(file_related_path,used_head->block_path,i);
-	break;
+    for (auto i = strlen(used_tail->block_path) - 1;i < strlen(used_tail->block_path);i--) {
+      if (used_tail->block_path[i] == '/') {
+        strncpy(file_related_path,used_tail->block_path,i);
+        break;
       }
     }
     
     printf("file_related_path: %s\n", file_related_path);
     char file_cloud_path[PATH_MAX];// /cloudfs/a/dog.txt
     snprintf(file_cloud_path, PATH_MAX, "%s%s",cloud_dir,file_related_path);
+    /*   
     printf("file_cloud_path: %s\n",file_cloud_path);
     int cloud_fd = open(file_cloud_path,O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
     if (cloud_fd == -1) {
@@ -177,18 +191,18 @@ DataNode* getFreeNode() {
       close(cloud_fd);
       return NULL;
     }
-
+    */
     if (remove(cache_block_path) != 0) {
       perror("getFreeNode(): Error deleting file");
       return NULL;
     }
-    used_list->remove(used_head);
-    free_list->addToHead(used_head);
+    used_list->remove(used_tail);
+    free_list->addToHead(used_tail);
     close(cache_img_fd);
-    close(cloud_fd);
+    //close(cloud_fd);
   }
   return free_list->getTail();
-    
+
 }
 //path: a/dog.txt
 
@@ -197,8 +211,15 @@ int moveToFree(int potato_index){
   if (node == NULL) {
     return -1;
   }
+  printf("used_list->remove(node); have free node %d\n",free_list->getSize());
   used_list->remove(node);
+  printf("before free_list->addToHead(node);have free node %d\n",free_list->getSize());
   free_list->addToHead(node);
+  printf("after free_list->addToHead(node) have free node %d\n",free_list->getSize());
+  fprintf(stderr,"used_list:\n");
+  used_list->print();
+  fprintf(stderr, "free_list:\n");
+  free_list->print();
   return 0;
 }
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread){
@@ -218,8 +239,8 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
       snprintf(file_path + strlen(file_path), i - prev + 1, "%s",path_content);
       fprintf(stderr, "cache_add(): file_path is %s\n",file_path);
       if (mkdir(file_path, 0700) == -1 && errno != EEXIST) {
-	printf("cache_add(): fail to create dir %s\n",file_path);
-	return -errno;
+  printf("cache_add(): fail to create dir %s\n",file_path);
+  return -errno;
       }
       
       prev = i;
@@ -243,12 +264,19 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
   free(path_content);
   
   DataNode* empty_node = getFreeNode();
+  fprintf(stderr, "after get free node\n");
+
   if (empty_node == NULL) {
     return -1;//can't get empty node, bad!
   }
+  printf("cache_add(): before free_list->remove(empty_node)  have free node %d\n",free_list->getSize());
   free_list->remove(empty_node);
+  printf("cache_add(): before used_list->addToHead(empty_node); have free node %d\n",free_list->getSize());
+  fprintf(stderr, "after remove node\n");
   used_list->addToHead(empty_node);
-  
+  fprintf(stderr, "after add to head\n");
+  printf("cache_add(): after used_list->addToHead(empty_node): have free node %d\n",free_list->getSize());
+
   char block_path[PATH_MAX];
   snprintf(block_path, PATH_MAX, "%s/%u",path,block_num);
   empty_node->block_path = block_path;
@@ -272,14 +300,19 @@ int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t le
     while (bytes_written_img != len) {
       ssize_t more_bytes_written = write(cache_img_fd, buf + bytes_written_img, len - bytes_written_img);
       if (more_bytes_written == 0) {
-	       break;
+         break;
       }
       bytes_written_img += more_bytes_written;
     }
   }
   *bread = bytes_written_img;
   // close(cache_fd);
+  
   // close(cache_img_fd);
+  fprintf(stderr,"used_list:\n");
+  used_list->print();
+  fprintf(stderr, "free_list:\n");
+  free_list->print();
   return 0;
   //real read & mkdir for new file if necessary
   //put into free
@@ -294,7 +327,6 @@ int main() {
   unsigned long long cache_block_size = 4;
   char* cloud_dir = (char*)"/home/hw210/566ece/project/s3-storage-tiering/src/cloudfs";
   cache_init(cache_dir_input, cache_size_input, cache_block_size, cache_img,cloud_dir);
-
   //********************************
   // cache_fetch() test
   printf("cache_fetch()**********************%d\n",1);
@@ -312,7 +344,6 @@ int main() {
   printf("getFreeNode()********************%d\n",2);
   getFreeNode();
   getFreeNode();
-
   printf("cache_add()********************%d\n",3);
   char* write_buf = (char*)"qwer";
   cache_add(file_path,2,write_buf,4,&bread);

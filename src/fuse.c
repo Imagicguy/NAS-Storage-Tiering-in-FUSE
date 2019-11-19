@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/types.h>
+#include <pthread.h>
 #include <unordered_map>
 #ifdef HAVE_SYS_XATTR_H
 #include <sys/xattr.h>
@@ -23,13 +24,20 @@ char cache_dir[64];
 char s3_dir[64];
 char mount_dir[64];
 unsigned long long block_size = 0;
-unsigned long long cache_size = 0;unordered_map<const char*,struct stat> metadata;
+unsigned long long cache_size = 0;
+
+
+unordered_map <string,struct stat> metadata;
+pthread_mutex_t lock;
+
 
 int cache_fetch(const char* path, uint32_t block_num, uint64_t offset,  char* buf, uint64_t len,ssize_t *bytes_read);
 
 int cache_add(const char* path, uint32_t block_num, const char* buf, uint64_t len,ssize_t* bread);
 
 int cache_init(char *cache_dir_input, uint64_t cache_size_input, unsigned long long cache_block_size, char* cache_img_input, char* cloud_dir_input);
+
+int moveToFree(int potato_index);
 
 void real_path(char* source, const char* relative_path) {
 
@@ -38,59 +46,90 @@ void real_path(char* source, const char* relative_path) {
 }
 
 void real_path_root(char* source, const char* relative_path) {
-
 	strcpy(source, rootdir);
 	strcat(source, relative_path);
 }
 
 void real_path_cache(char* source, const char* relative_path) {
-
 	strcpy(source, cache_dir);
 	strcat(source, relative_path);
 }
 
 void print_getattr(struct stat *stbuf) {
-    fprintf(stderr, "print_getattr(): ready to print file metadata...........\n");
+    // fprintf(stderr, "print_getattr(): ready to print file metadata...........\n");
     fprintf(stderr, "stbuf->uid = %d\n", stbuf->st_uid);
     // fprintf(stderr, "stbuf->pid = %d\n", stbuf->st_pid);
     fprintf(stderr, "stbuf->mode = %d\n", stbuf->st_mode);
     fprintf(stderr, "stbuf->size = %jd\n", stbuf->st_size);
 }
 
+void print_metadata_map(){
+    for (auto it = metadata.begin(); it != metadata.end();++it) {
+        cout << "key: " << it->first << endl;
+    }
+}
+
+void copy_getattr(const char * path, struct stat * source) {
+    struct stat statbuf;
+    memset (&statbuf, 0, sizeof(statbuf));
+    statbuf.st_size = source->st_size;
+    statbuf.st_uid = source->st_uid;
+    statbuf.st_gid = source->st_gid;
+    statbuf.st_mtime = source->st_mtime;
+    statbuf.st_atime = source->st_atime;
+    statbuf.st_mode = source->st_mode;
+    string a(path);
+    metadata.insert({a, statbuf});
+    print_getattr(&metadata[a]);
+}
+
+
 int rat_getattr(const char *path, struct stat *stbuf) {
+    // fprintf(stderr, "rat_getattr(): path =%s\n",path );
+    // fprintf(stderr, "rat_getattr(): path len = %d\n",strlen(path));
 	fprintf(stderr, "In rat_getattr function-----------------------\n");
-	/*
-	if (metadata.find(path) != metadata.end()) {
-	  perror("rat_getattr(): get metadata from map\n");
-	  *stbuf = metadata.at(path);
-	  
+    fprintf(stderr, "metadata size = %lu\n",metadata.size());
+    // print_metadata_map();
+    int retstat = 0;
+    char real[64];
+    real_path(real, path);
+
+    fprintf(stderr, "real = %s\n",real);
+    string real_str(real);
+    cout << "real_str = " << real_str << endl;
+
+    ///////////////////////////////////////////////////////////////
+	if (metadata.find(real_str) != metadata.end()) {
+      // fprintf(stderr, "key: %s\n",metadata.find(real_str)->first);
+        perror("rat_getattr(): get metadata from map\n");   
+        cout << "the key get from map is : " << metadata.find(real_str)->first << endl;
+
+      ////////
+	  *stbuf = metadata.at(real_str);
+      fprintf(stderr, "find the file metadata from map,ready to print......................\n");
 	  print_getattr(stbuf);
-	  
+      // print_metadata_map();
+      fprintf(stderr, "metadata size = %lu\n",metadata.size());
+      fprintf(stderr, "return\n");
 	  return 0;
-	}
-	*/
-	int retstat = 0;
-	char real[64];
-	real_path(real, path);
-	fprintf(stderr,"before lstat, path: %s\n",path);
-	fprintf(stderr, "before lstat, current real_path: %s\n", real);
+	}	
+	///////////////////////////////////////////////////////////////
+
 	retstat = lstat(real, stbuf);
-	if (retstat == -1) {
-	  
-	  fprintf(stderr,"rat_getattr(): failed to get from s3, try with cache...\n");
+	if (retstat == -1) {  
+	  fprintf(stderr,"rat_getattr(): failed to get from s3, try with cache.........\n");
 	  return -errno;
-	  /*
-	  char real2[64];
-	  real_path_cache(real2, path);
-	  fprintf(stderr, "current path: %s\n", real2);
-	  retstat = lstat(real2, stbuf);
-	  if (retstat == -1) {
-	    perror("rat_getattr(): retstat from cache_dir == -1\n");
-	    return -errno;
-	  }
-	  */
 	}
-	//	perror("rat_getattr(): get stbuf from s3...\n");
+
+    fprintf(stderr, "create new key in metadata: %s\n", real);
+
+    copy_getattr(real, stbuf);
+    fprintf(stderr, "create new key in file metadata map, ready to print...........\n");
+    print_getattr(stbuf);
+    fprintf(stderr, "##############################################################\n");
+    // print_metadata_map();
+    fprintf(stderr, "metadata size = %lu\n",metadata.size());
+    fprintf(stderr, "return\n");  
 	return 0;
 }
 
@@ -135,8 +174,11 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
   //           fprintf(stderr, "stat on the s3 file failed\n");
   //           return -errno;
   //       }
+        pthread_mutex_lock(&lock);
+
         fprintf(stderr, "about to call cache_fetch............\n");
         ssize_t bread = 0;
+
 
         // 从cache里面找，找到返回true path block 
         // search from cache, return 0 if founded
@@ -157,7 +199,8 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
             int s3_read = pread(fd, s3_read_buf, block_size, block_size * block);
             if (s3_read == -1) {
             	fprintf(stderr, "read error form s3_dir\n");
-            	return -1;
+                pthread_mutex_unlock(&lock);
+            	return -errno;
             }
             else {
             	fprintf(stderr, "read %lu bytes from s3_dir\n", (unsigned long)s3_read);
@@ -167,6 +210,8 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 
             	if (cache_add(path, block, s3_read_buf, block_size, &cache_add_bytes) == -1) {
             		fprintf(stderr, "fail to add block to cache\n");
+                    pthread_mutex_unlock(&lock);
+                    return -1;
             	}
 
             	fprintf(stderr, "bytes added to cache = %zd\n", cache_add_bytes);
@@ -175,12 +220,12 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
                 free(s3_read_buf);
 
                 if (s3_read < block_size) {
-                    fprintf(stderr, "read less than requested, %lu instead of %lu\n", (unsigned long)s3_read, (unsigned long)block_size);
+                    // fprintf(stderr, "read less than requested, %lu instead of %lu\n", (unsigned long)s3_read, (unsigned long)block_size);
                     bytes_read += s3_read;
                     fprintf(stderr, "bytes_read after =%lu\n", (unsigned long)bytes_read);       
                 } 
                 else {
-                    fprintf(stderr, "%lu bytes for fuse buffer\n", (unsigned long) block_size);
+                    fprintf(stderr, "%lu bytes for fuse buffer\n", (unsigned long)block_size);
                     bytes_read += block_size;
                     fprintf(stderr, "bytes_read=%lu\n", (unsigned long)bytes_read);
                 }
@@ -194,20 +239,28 @@ int rat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
         	fprintf(stderr, "got %lu bytes from cache\n", (unsigned long)bread);
         	bytes_read += bread;
         	fprintf(stderr, "bytes_read = %lu\n", (unsigned long)bytes_read);
-	}
-	
-        buf_offset += block_size;
+	    }
+	    
+        pthread_mutex_unlock(&lock);
+        buf_offset += partial_block;
 	}
     
 	return bytes_read;
 }
 
 int rat_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-  /*
-  if (metadata.find(path) != metadata.end()) {
-    fprintf(stderr,"rat_write: this file metadata existed in map, changing it size now....\n");
-    metadata[path].st_size = size;
-  }*/
+
+  //////////////////////////////////////////////////////////////////////
+    char real[64];
+    real_path(real, path);
+    string path_str(real);
+    if (metadata.find(path_str) != metadata.end()) {
+        fprintf(stderr,"rat_write: this file metadata existed in map, changing it size now....\n");
+        metadata[path_str].st_size = size;
+    }
+  ////////////////////////////////////////////////////////////////////
+
+
   fprintf(stderr, "In rat_write function-----------------------\n");
   fprintf(stderr, "size == %lu\n",size);
   int bytes_write = 0;
@@ -218,23 +271,32 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
   // fprintf(stderr, "first_block = %d\n", first_block);
   // fprintf(stderr, "last_block = %d\n", last_block);
   for (uint32_t block = first_block; block <= last_block; block++) {
+
+    // in each block, number of bytes that can be written, like partial_block in rat_read()
     size_t write_size;
     
     if (block == first_block) {
         write_size = ((block + 1) * block_size) - offset;
     }
+
     else if (block == last_block){
       write_size = size - buf_offset;
     }
+
     else {
       write_size = block_size;
     }
+
     if (write_size > size) {
       write_size = size;
     }
+
     if (write_size == 0) {
       continue;
     }
+
+    pthread_mutex_lock(&lock);
+
     fprintf(stderr, "writing block %lu, 0x%lx to 0x%lx\n", (unsigned long)block, 
 	    (unsigned long)offset + buf_offset,
             (unsigned long)offset + buf_offset + write_size);
@@ -248,11 +310,13 @@ int rat_write(const char *path, const char *buf, size_t size, off_t offset, stru
     fprintf(stderr, "file descriptor = %lu\n", fi->fh);
     if (nwritten == -1) {
         fprintf(stderr, "pwrite error!!\n");
+        pthread_mutex_unlock(&lock);
         return -errno;
     }
 
     fprintf(stderr,"rat_write(): pwrite(): nwritten= %lu\n", nwritten);
     bytes_write += nwritten;
+    pthread_mutex_unlock(&lock);
     /*
     if (cache_add(path, block, buf + buf_offset, write_size, &cache_add_bytes) == -1) {
       fprintf(stderr, "fail to add block to cache\n");
@@ -354,20 +418,7 @@ int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     	perror("error on rat_create");
     	return -errno;
     }
-    /*
-    struct stat statbuf;
-    if (stat(real,&statbuf) != 0) {
-      perror("rat_create(): stat(real) != 0\n");
-      if (stat(realM, &statbuf) != 0) {
-	perror("realM != 0");
-      }
-      return -errno;
-      
-    }else {
-      printf("rat_create(): metadata[%s] storing...\n",path);
-      metadata[path]= statbuf;
-      print_getattr(&statbuf);
-      }*/
+
     info->fh = retval;
     fprintf(stderr, "file descriptor in create = %d\n", retval);
     int cmod = chmod(real, mode);
@@ -375,7 +426,20 @@ int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
         fprintf(stderr, "failure on chmod in rat_create\n");
         return -errno;
     }
-    // close(retval);
+
+    /////////////////////////////////////////////
+    struct stat statbuf;
+    if (stat(real,&statbuf) != 0) {
+      perror("rat_create(): stat(real) != 0\n");
+      return -errno;
+    }else {
+        string path_str(real);
+      printf("rat_create(): metadata[%s] storing...\n",path);
+      metadata[path_str] = statbuf;
+      print_getattr(&statbuf);
+    }
+    ////////////////////////////////////////////
+
     return 0;
 }
 
@@ -384,7 +448,7 @@ int rat_create(const char *path, mode_t mode, struct fuse_file_info *info) {
 int rat_setxattr(const char *path, const char *name, const char *value, size_t size, int flags) {
     fprintf(stderr, "In rat_setxattr function-----------------------\n");
     char real[64];
-    real_path_cache(real, path);
+    real_path(real, path);
     int ret = lsetxattr(real, name, value, size, flags);
     if (ret == -1) {
         perror("failure on setxattr");
@@ -396,7 +460,7 @@ int rat_setxattr(const char *path, const char *name, const char *value, size_t s
 int rat_getxattr(const char *path, const char *name, char *value, size_t size) {
     fprintf(stderr, "In rat_getxattr function-----------------------\n");
     char real[64];
-    real_path_cache(real, path);
+    real_path(real, path);
     int ret = getxattr(real, name, value, size);
     if (ret == -1) {
         perror("failure on getxattr");
@@ -416,8 +480,18 @@ int rat_utime(const char *path, struct utimbuf *ubuf) {
     fprintf(stderr, "In rat_utime function-----------------------\n");
     return 0;
     char real[64];
-    real_path_cache(real, path);
+    real_path(real, path);
     int ret = utime(real, ubuf);
+
+    /////////////////////////////////////
+    string path_str(path);
+    if (metadata.find(path_str) != metadata.end()) {
+        metadata[path_str].st_mtime = ubuf->modtime;
+        metadata[path_str].st_atime = ubuf->actime;
+        fprintf(stderr, "st_mtime = %ld\n", ubuf->modtime);
+    }
+    ////////////////////////////////////
+
     if (ret == -1) {
         perror("failure on utime");
         return -errno;
@@ -429,7 +503,7 @@ int rat_truncate(const char *path, off_t newsize) {
   return 0;
   fprintf(stderr, "In rat_truncate function-----------------------\n");
   char real[64];
-  real_path_cache(real, path);
+  real_path(real, path);
   int ret = truncate(real, newsize);
     if (ret == -1) {
       perror("failure on truncate");
@@ -464,6 +538,7 @@ int rat_mkdir(const char *path, mode_t mode) {
 
 int rat_unlink(const char *path) { 
     fprintf(stderr, "In rat_unlink function-----------------------\n");
+    pthread_mutex_lock(&lock);
     char real[64];
     real_path(real, path);
     // remove from s3
@@ -471,24 +546,50 @@ int rat_unlink(const char *path) {
     if (res == -1) {
         return -errno;
     }
-
     // remove from cache
+    char cache_d[64];
+    real_path_cache(cache_d, path);
+    DIR *dr = opendir(cache_d);
+    struct dirent *de; 
+    if (dr == NULL) {
+        fprintf(stderr, "Could not open current directory\n" ); 
+        return -errno; 
+    } 
+    // int i = 0;
+    while ((de = readdir(dr)) != NULL) {
+        fprintf(stderr, "ready to delete %s\n", de->d_name);
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+            continue;
+        }
+        char file_to_remove[64];
+        strcpy(file_to_remove, cache_d);
+        strcat(file_to_remove, "/");
+        strcat(file_to_remove, de->d_name); 
 
-    // char cache_dir[64];
-    // real_path_cache(cache_dir, path);
-    // DIR *dr = opendir(cache_dir);
-    // struct dirent *de; 
-    // if (dr == NULL) {
-    //     fprintf(stderr, "Could not open current directory\n" ); 
-    //     return -errno; 
-    // } 
+        char buf[100];
+        fprintf(stderr, "file_to_remove = %s\n", file_to_remove);
+        FILE * cache_ptr = fopen(file_to_remove, "r");
+        if (cache_ptr == NULL) {
+            fprintf(stderr, "in rat_unlink, cannot open the file to be deleted\n");
+            pthread_mutex_unlock(&lock);
+            return -errno;
+        }
+        if (fgets(buf, 100, cache_ptr) != NULL) {
+            puts(buf);
+            fclose(cache_ptr);
+        }
 
-    // while ((de = readdir(dr)) != NULL) {
-    //     fprintf(stderr, "ready to delete %s\n", de->d_name); 
-        
-    // }
-  
-    // closedir(dr);     
+        int potato_index = atoi(strtok(buf, "#"));
+        fprintf(stderr, "potato_index = %d\n", potato_index);
+
+        if (moveToFree(potato_index) == -1) {
+            fprintf(stderr, "fail to move potato_index %d to free list!!!!!\n", potato_index);
+        }
+        remove(file_to_remove);
+    }
+    remove(cache_d);
+    closedir(dr);  
+    pthread_mutex_unlock(&lock);   
     return 0; 
 }
 
@@ -496,13 +597,14 @@ int rat_rmdir(const char *path) {
     fprintf(stderr, "In rat_unlink function-----------------------\n");
     char real[64];
     real_path(real, path);
-    // remove from s3
-    int res = rmdir(real);
-    if (res == -1) {
+    char real_cache[64];
+    real_path_cache(real_cache, path);
+
+    // remove from s3 and cache
+    if (rmdir(real) == -1 || rmdir(real_cache) == -1) {
         return -errno;
     }
     return 0;
-
 }
 
 
@@ -517,7 +619,7 @@ static struct rat_operations : fuse_operations {
     releasedir = rat_releasedir;
     access = rat_access;
     create = rat_create;
-    utime = rat_utime;
+    // utime = rat_utime;
     truncate = rat_truncate; 
     flush = rat_flush;   
     mkdir = rat_mkdir;
@@ -577,6 +679,10 @@ int main(int argc, char **argv) {
 	if (cache_init(cache_dir, cache_size, block_size, cache_img_input, s3_dir) == 0) {
 		fprintf(stderr, "cache init success......\n");
 	}
+
+    // init mutex lock
+    pthread_mutex_init(&lock, NULL);
+
 
 	// return fuse_main(argc, argv, &rat_operations, NULL);
 	return fuse_main(argc, argv, &rat_oper_init, NULL);
