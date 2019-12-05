@@ -6,10 +6,12 @@
 using namespace std;
 class DataNode{
 public:
-  char* block_path;// == "a/dog.txt/2"
+  //  char* block_path;// == "a/dog.txt/2"
+  char block_path[64];
   DataNode* prev;
   DataNode* next;
-  DataNode(int x):block_index(x), block_path(NULL), prev(NULL), next(NULL) {}
+
+  DataNode(int x):block_index(x),  prev(NULL), next(NULL) {}
   int index()const{return block_index;}
 private:
   int block_index;//block_index should not change after this node created
@@ -18,6 +20,9 @@ private:
 
 class DLList{
 public:
+  size_t size;
+  DataNode* head;
+  DataNode* tail;
   DLList(): size(0){
     head = new DataNode(-1);
     tail = new DataNode(-1);
@@ -35,18 +40,17 @@ public:
   void print()const;
   int getSize() const;
   ~DLList();
-private:
-  int size;
-  DataNode* head;
-  DataNode* tail;
-  
 };
 
 int DLList::getSize()const{
   return size;
 }
 DLList::~DLList(){
-  delete head;
+  while (head != tail) {
+    DataNode* tmp = head;
+    head = head->next;
+    delete tmp;
+  }
   delete tail;
 }
 DataNode*  DLList::getHead() const{
@@ -65,6 +69,16 @@ void DLList::addToTail(DataNode* node){
 }
 
 void DLList::remove(DataNode* node) {
+  
+  if (node == head) {
+    perror("remove head\n");
+    return;
+  }
+  if (node == NULL || node == head || node == tail){
+    perror("remove denied\n");
+    return;
+  }
+  
   node->prev->next = node->next;
   node->next->prev = node->prev;
   node->prev = NULL;
@@ -86,6 +100,10 @@ void DLList::refresh(DataNode* node){
 
 void DLList::print()const{
   DataNode* tmp = head;
+  if (tmp == NULL){
+    cout << "print(): head is NULL\n" << endl;
+    return;
+  }
   while(tmp != NULL) {
     cout << tmp->index() << " -> ";
     tmp = tmp->next;
